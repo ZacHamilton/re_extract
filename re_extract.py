@@ -232,6 +232,6 @@ for session_type_id, session_type_name in SESSION_TYPES.items():
                 str(session_abstract)
 
             with open(OUTPUT_FILE, "a") as myfile:
-                myfile.write(str(write_contents.strip()) + "\n")
+                myfile.write(str(write_contents.encode("utf-8").strip()) + "\n")
 
 DRIVER.close()
