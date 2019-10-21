@@ -5,7 +5,7 @@ AWS re:Invent Session Information Downloader
 import os
 import re
 from time import sleep
-
+import io
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -21,7 +21,10 @@ SESSION_TYPES = {
     "2623": "Chalk Talk",
     "2": "Session",
     "2523": "Workshop",
-    "2723": "20-Minute Presentation"
+    "2723": "20-Minute Presentation",
+	"2823": "Activity",
+	"2828": "Dev Chats",
+	"2834": "Hackathons and Jams"
 }
 
 TOPICS = {
@@ -56,12 +59,13 @@ TOPICS = {
 load_dotenv(dotenv_path='.env')
 USERNAME = os.environ["REINVENT_USERNAME"]
 PASSWORD = os.environ["REINVENT_PASSWORD"]
-CHROME_DRIVER = os.environ["PATH_TO_CHROMEDRIVER"]
+CHROME_DRIVER = os.environ["CHROMEDRIVER_PATH"]
 REQ_VERIFY = bool(os.environ["VERIFY_SSL_CERTS"].lower() == 'true')
 
 # Initialize headless chrome
 CHROME_OPTIONS = Options()
 CHROME_OPTIONS.add_argument("--headless")
+CHROME_OPTIONS.add_argument(f"user-agent={os.environ['CHROMEDRIVER_USER_AGENT']}")
 CONTENT_TO_PARSE = ''
 
 DRIVER = webdriver.Chrome(chrome_options=CHROME_OPTIONS, executable_path=CHROME_DRIVER)
@@ -89,6 +93,7 @@ def session_details(_session_id):
     '''
     details_url = 'https://www.portal.reinvent.awsevents.com/connect/dwr/call/' \
                   'plaincall/ConnectAjax.getSchedulingJSON.dwr'
+
     data = {
         "callCount": 1,
         "windowName": "",
@@ -102,7 +107,7 @@ def session_details(_session_id):
         "page": "%2Fconnect%2Fsearch.ww",
         "scriptSessionId": "1234567"
     }
-    headers = {'Content-Type': 'text/plain'}
+    headers = {'Content-Type': 'text/plain', 'User-Agent': os.environ['CHROMEDRIVER_USER_AGENT']}
     response = requests.post(details_url, headers=headers, data=data, verify=REQ_VERIFY)
     returned = response.content.decode('utf-8').replace("\\", '')
 
@@ -147,7 +152,7 @@ OUTPUT_FILE = 'sessions.txt'
 
 # Create a header row for the file. Note the PIPE (|) DELIMITER.
 with open(OUTPUT_FILE, "w") as myfile:
-    myfile.write("Session ID|Title|Type|Topic|Day|Date|Start|End|Venue|Room|Interest|Abstract\n")
+    myfile.write("Session ID|Title|Type|Topic|Day|Date|Start|End|Venue|Room|Abstract\n")
 
 # Login to the reinvent website
 login(DRIVER, USERNAME, PASSWORD)
@@ -156,82 +161,170 @@ login(DRIVER, USERNAME, PASSWORD)
 # Get More Results link stops working on the full list. Haven't had issues
 # looking at the lists by session.
 for session_type_id, session_type_name in SESSION_TYPES.items():
-    for topic_id, topic_name in TOPICS.items():
-        url = "https://www.portal.reinvent.awsevents.com/connect/search.ww#" \
-               "loadSearch-searchPhrase=" \
-               "&searchType=session" \
-               "&tc=0" \
-               "&sortBy=" \
-               f"abbreviationSort&sessionTypeID={session_type_id}" \
-               f"&p=&i(19577)={topic_id}"
-        DRIVER.get('chrome://settings/clearBrowserData')
-        DRIVER.get(url)
-        sleep(3)
+	if session_type_name in []: #["Builders Session", "Chalk Talk"]:
+		print("Skipping", session_type_name)
+		continue
+	elif session_type_name in ["20-Minute Presentation","Activity", "Dev Chats", "Hackathons and Jams"]:
+		url = "https://www.portal.reinvent.awsevents.com/connect/search.ww#" \
+			   "loadSearch-searchPhrase=" \
+			   "&searchType=session" \
+			   "&tc=0" \
+			   "&sortBy=" \
+			   f"abbreviationSort&sessionTypeID={session_type_id}" \
+			   f"&p=&i(19577)="
+		DRIVER.get('chrome://settings/clearBrowserData')
+		DRIVER.get(url)
+		sleep(3)
 
-        print(f"Getting {session_type_name} sessions for topic: {topic_name}")
-        more_results = True
+		print(f"Getting {session_type_name} sessions")
+		more_results = True
 
-        # Click through all of the session results pages for a session.
-        while more_results:
-            try:
-                DRIVER.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                get_results_btn = DRIVER.find_element_by_link_text("Get More Results")
-                get_results_btn.click()
-                sleep(3)
-            except NoSuchElementException as e_error:
-                more_results = False
+		# Click through all of the session results pages for a session.
+		while more_results:
+			try:
+				DRIVER.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+				get_results_btn = DRIVER.find_element_by_link_text("Get More Results")
+				get_results_btn.click()
+				sleep(3)
+			except NoSuchElementException as e_error:
+				more_results = False
 
-        # Once all sessions have been loaded append to a variable for use in BS
-        CONTENT_TO_PARSE = DRIVER.page_source
+		# Once all sessions have been loaded append to a variable for use in BS
+		CONTENT_TO_PARSE = DRIVER.page_source
 
-        # Extract high level session info. Note that in some rows there are audio
-        # options inside an 'i' tag so we strip them out to make this easier on BS
-        soup = BeautifulSoup(CONTENT_TO_PARSE, "html.parser")
+		# Extract high level session info. Note that in some rows there are audio
+		# options inside an 'i' tag so we strip them out to make this easier on BS
+		soup = BeautifulSoup(CONTENT_TO_PARSE, "html.parser")
 
-        for i in soup.find_all('i'):
-            i.extract()
+		for i in soup.find_all('i'):
+			i.extract()
 
-        sessions = soup.find_all("div", class_="sessionRow")
+		sessions = soup.find_all("div", class_="sessionRow")
 
-        # For each session, pull out the relevant fields and write them to the sessions.txt file.
-        for session in sessions:
-            session_soup = BeautifulSoup(str(session), "html.parser")
-            session_id = session_soup.find("div", class_="sessionRow")
-            session_id = session_id['id']
-            session_id = session_id[session_id.find("_")+1:]
-            session_number = session_soup.find("span", class_="abbreviation")
-            session_number = session_number.string.replace(" - ", "")
-            session_title = session_soup.find("span", class_="title")
-            session_title = session_title.string.encode('utf-8').rstrip()
-            session_title = session_title.decode('utf-8').strip()
-            session_type = session_soup.find("small", class_="type").text
-            session_interest = session_soup.find("a", class_="interested")
-            session_abstract = \
-                session_soup.find("span", class_="abstract").text.replace(' View More', '')
-            details = session_details(session_id)
+		# For each session, pull out the relevant fields and write them to the sessions.txt file.
+		for session in sessions:
+			session_soup = BeautifulSoup(str(session), "html.parser")
+			session_id = session_soup.find("div", class_="sessionRow")
+			session_id = session_id['id']
+			session_id = session_id[session_id.find("_")+1:]
+			session_number = session_soup.find("span", class_="abbreviation")
+			session_number = session_number.string.replace(" - ", "")
+			session_title = session_soup.find("span", class_="title")
+			session_title = session_title.string.encode('utf-8').rstrip()
+			session_title = session_title.decode('utf-8').strip()
+			session_type = session_soup.find("small", class_="type").text
+			session_interest = session_soup.find("a", class_="interested")
+			session_abstract = \
+				session_soup.find("span", class_="abstract").text.replace(' View More', '')
+			details = session_details(session_id)
 
-            print("Writing", session_number)
+			print("Writing", session_number)
 
-            if session_interest is None:
-                session_interest = False
-            else:
-                session_interest = True
+			if session_interest is None:
+				session_interest = False
+			else:
+				session_interest = True
 
-            write_contents = \
-                str(session_number) + "|" + \
-                str(session_title) + "|" + \
-                str(session_type) + "|" + \
-                topic_name + "|" + \
-                str(details['day']) + "|" + \
-                str(details['date']) + "|" + \
-                str(details['start_time']) + "|" + \
-                str(details['end_time']) + "|" + \
-                str(details['venue']) + "|" + \
-                str(details['room']) + "|" + \
-                str(session_interest) + "|" + \
-                str(session_abstract)
+			write_contents = \
+				str(session_number) + "|" + \
+				str(session_title) + "|" + \
+				str(session_type) + "|" + \
+				"na" + "|" + \
+				str(details['day']) + "|" + \
+				str(details['date']) + "|" + \
+				str(details['start_time']) + "|" + \
+				str(details['end_time']) + "|" + \
+				str(details['venue']) + "|" + \
+				str(details['room']) + "|" + \
+				str(session_abstract)
+				 #str(session_interest) + "|" + \
 
-            with open(OUTPUT_FILE, "a") as myfile:
-                myfile.write(str(write_contents.encode("utf-8").strip()) + "\n")
+ #.encode('utf-8').strip()
+ 
+			with open(OUTPUT_FILE, "a") as myfile:
+				myfile.write(str(write_contents.encode("utf-8").strip()) + "\n")
+	
+	else:
+
+
+		for topic_id, topic_name in TOPICS.items():
+			url = "https://www.portal.reinvent.awsevents.com/connect/search.ww#" \
+				   "loadSearch-searchPhrase=" \
+				   "&searchType=session" \
+				   "&tc=0" \
+				   "&sortBy=" \
+				   f"abbreviationSort&sessionTypeID={session_type_id}" \
+				   f"&p=&i(19577)={topic_id}"
+			DRIVER.get('chrome://settings/clearBrowserData')
+			DRIVER.get(url)
+			sleep(3)
+
+			print(f"Getting {session_type_name} sessions for topic: {topic_name}")
+			more_results = True
+
+			# Click through all of the session results pages for a session.
+			while more_results:
+				try:
+					DRIVER.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+					get_results_btn = DRIVER.find_element_by_link_text("Get More Results")
+					get_results_btn.click()
+					sleep(3)
+				except NoSuchElementException as e_error:
+					more_results = False
+
+			# Once all sessions have been loaded append to a variable for use in BS
+			CONTENT_TO_PARSE = DRIVER.page_source
+
+			# Extract high level session info. Note that in some rows there are audio
+			# options inside an 'i' tag so we strip them out to make this easier on BS
+			soup = BeautifulSoup(CONTENT_TO_PARSE, "html.parser")
+
+			for i in soup.find_all('i'):
+				i.extract()
+
+			sessions = soup.find_all("div", class_="sessionRow")
+
+			# For each session, pull out the relevant fields and write them to the sessions.txt file.
+			for session in sessions:
+				session_soup = BeautifulSoup(str(session), "html.parser")
+				session_id = session_soup.find("div", class_="sessionRow")
+				session_id = session_id['id']
+				session_id = session_id[session_id.find("_")+1:]
+				session_number = session_soup.find("span", class_="abbreviation")
+				session_number = session_number.string.replace(" - ", "")
+				session_title = session_soup.find("span", class_="title")
+				session_title = session_title.string.encode('utf-8').rstrip()
+				session_title = session_title.decode('utf-8').strip()
+				session_type = session_soup.find("small", class_="type").text
+				session_interest = session_soup.find("a", class_="interested")
+				session_abstract = \
+					session_soup.find("span", class_="abstract").text.replace(' View More', '')
+				details = session_details(session_id)
+
+				print("Writing", session_number)
+
+				if session_interest is None:
+					session_interest = False
+				else:
+					session_interest = True
+
+				write_contents = \
+					str(session_number) + "|" + \
+					str(session_title) + "|" + \
+					str(session_type) + "|" + \
+					topic_name + "|" + \
+					str(details['day']) + "|" + \
+					str(details['date']) + "|" + \
+					str(details['start_time']) + "|" + \
+					str(details['end_time']) + "|" + \
+					str(details['venue']) + "|" + \
+					str(details['room']) + "|" + \
+					str(session_abstract)
+					 #str(session_interest) + "|" + \
+
+	 #.encode('utf-8').strip()
+	 
+				with open(OUTPUT_FILE, "a") as myfile:
+					myfile.write(str(write_contents.encode("utf-8").strip()) + "\n")
 
 DRIVER.close()
