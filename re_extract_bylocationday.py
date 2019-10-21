@@ -22,9 +22,9 @@ SESSION_TYPES = {
     "2": "Session",
     "2523": "Workshop",
     "2723": "20-Minute Presentation",
-	"2823": "Activity",
-	"2828": "Dev Chats",
-	"2834": "Hackathons and Jams"
+    "2823": "Activity",
+    "2828": "Dev Chats",
+    "2834": "Hackathons and Jams"
 }
 
 DAYS = {
@@ -151,7 +151,7 @@ login(DRIVER, USERNAME, PASSWORD)
 # Get More Results link stops working on the full list. Haven't had issues
 # looking at the lists by session.
 for session_type_id, session_type_name in SESSION_TYPES.items():
-	if session_type_name in []: #["Builders Session", "Chalk Talk"]:
+	if session_type_name in ["20-Minute Presentation","Activity", "Dev Chats", "Hackathons and Jams"]:
 		print("Skipping", session_type_name)
 		continue
 	
